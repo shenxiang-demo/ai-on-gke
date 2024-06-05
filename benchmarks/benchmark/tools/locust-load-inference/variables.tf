@@ -119,7 +119,7 @@ variable "max_num_prompts" {
 variable "max_output_len" {
   description = "Benchmark server configuration for max output length."
   type        = number
-  default     = 1000
+  default     = 256
   validation {
     condition     = var.max_output_len > 4
     error_message = "The max_output_len value must be greater than 4. TGI framework throws an error for too short of sequences."
@@ -129,7 +129,7 @@ variable "max_output_len" {
 variable "max_prompt_len" {
   description = "Benchmark server configuration for max prompt length."
   type        = number
-  default     = 1000
+  default     = 256
   validation {
     condition     = var.max_prompt_len > 4
     error_message = "The max_prompt_len value must be greater than 4. TGI framework throws an error for too short of sequences."

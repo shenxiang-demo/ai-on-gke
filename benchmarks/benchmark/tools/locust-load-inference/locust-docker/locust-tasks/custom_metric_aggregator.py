@@ -60,3 +60,4 @@ class TokenMetricCollector:
             "average-time-to-first-token": sum(self.time_to_first_token_list)/max(len(self.time_to_first_token_list),1)
         }
         return json.dumps(stats)
+

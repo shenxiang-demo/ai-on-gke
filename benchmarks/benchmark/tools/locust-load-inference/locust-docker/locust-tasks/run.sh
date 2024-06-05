@@ -42,7 +42,7 @@ elif [[ "$LOCUST_MODE" = "worker" ]]; then
     huggingface-cli login --token $HUGGINGFACE_TOKEN
 
     FILTER_PROMPTS="python /locust-tasks/load_data.py"
-    FILTER_PROMPTS_OPTS="--gcs_path=$GCS_PATH --tokenizer=$TOKENIZER --max_prompt_len=$MAX_PROMPT_LEN  --max_num_prompts=$MAX_NUM_PROMPTS"
+    FILTER_PROMPTS_OPTS="--gcs_path=$GCS_PATH --tokenizer=$TOKENIZER --max_prompt_len=$MAX_PROMPT_LEN --max_num_prompts=$MAX_NUM_PROMPTS"
     echo "$FILTER_PROMPTS $FILTER_PROMPTS_OPTS"
     $FILTER_PROMPTS $FILTER_PROMPTS_OPTS
 

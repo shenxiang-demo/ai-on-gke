@@ -58,6 +58,6 @@ spec:
             - name: HUGGINGFACE_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: hf-token1
+                  name: hf-token
                   key: HF_TOKEN
 %{ endfor ~}

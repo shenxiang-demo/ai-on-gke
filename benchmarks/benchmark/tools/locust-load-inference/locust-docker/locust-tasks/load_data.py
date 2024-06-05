@@ -36,8 +36,32 @@ def load_test_prompts(gcs_path: str, tokenizer: PreTrainedTokenizerBase, max_pro
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(object_name)
 
-    
-    return []
+    if not bucket.exists():
+        raise ValueError(
+            f"Cannot access gs://{bucket_name}, it may not exist or you may not have access to this bucket.")
+    if not blob.exists():
+        raise ValueError(
+            f"Cannot access {gcs_path}, it may not exist or you may not have access to this object.")
+
+    test_data = []
+    start = time.time()
+    with blob.open("r") as f:
+        for prompt in f:
+            prompt_token_ids = tokenizer(prompt).input_ids
+            prompt_len = len(prompt_token_ids)
+            if prompt_len < 4:
+                # Prune too short sequences.
+                # This is because TGI causes errors when the input or output length
+                # is too short.
+                continue
+            if prompt_len > max_prompt_len:
+                # Prune too long sequences.
+                continue
+            test_data.append(prompt)
+    end = time.time()
+    total_time = end - start
+    logging.info(f"Filtered test prompts after {total_time} seconds.")
+    return test_data
 
 
 def main(gcs_path: str, tokenizer_name: str, max_prompt_len: int, max_num_prompts: int):
@@ -52,9 +76,22 @@ def main(gcs_path: str, tokenizer_name: str, max_prompt_len: int, max_num_prompt
     logging.info(f"Successfully loaded tokenizer {tokenizer_name}.")
 
     logging.info(f"Loading test prompts from {gcs_path}.")
+    try:
+        test_data = load_test_prompts(gcs_path, tokenizer, max_prompt_len)
+    except Exception as e:
+        logging.error(f"Failed to load test data from {gcs_path}: {e}")
+    logging.info(f"Loaded {len(test_data)} test prompts from {gcs_path}.")
 
-    test_data = load_test_prompts(gcs_path, tokenizer, max_prompt_len)
- 
+    if max_num_prompts < len(test_data):
+        test_data = random.sample(test_data, max_num_prompts)
+
+    # Rewrite filtered dataset to tmp file.
+    with open("locust-tasks/filtered_prompts.txt", "x") as f:
+        for prompt in test_data:
+            strippedPrompt = prompt.replace("\n", " ")
+            f.write(f'{strippedPrompt}\n')
+    logging.info(
+        f"Wrote {len(test_data)} test prompts to locust-tasks/filtered_prompts.txt")
 
 
 if __name__ == "__main__":
