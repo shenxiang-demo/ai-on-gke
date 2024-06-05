@@ -1,0 +1,19 @@
+curl -X POST http://34.126.95.177:80/generate   -H "x-route-to: deployment-1"   -d '{ "prompt": "what is the capitcal of peru?", "use_beam_search": false,  "temperature": 0 , "max_tokens" : 70}'
+curl -X POST http://34.126.95.177:80/generate    -H "x-route-to: deployment-2"  -d '{ "prompt": "what is the capitcal of mali?", "use_beam_search": false,  "temperature": 0 , "max_tokens" : 70}'
+
+curl -X POST http://34.124.151.186:80/generate  -H "service: short" -d '{ "prompt": "what is the capitcal of france?", "use_beam_search": false,  "temperature": 0 , "max_tokens" : 70}'
+curl -X POST http://34.124.151.186:80/generate  -H "service: long"  -d '{ "prompt": "what is the capitcal of guatemala?", "use_beam_search": false,  "temperature": 0 , "max_tokens" : 70}'
+curl -X POST http://34.124.151.186:80/generate  -H "service: random"  -d '{ "prompt": "what is the capitcal of egypt17?", "use_beam_search": false,  "temperature": 0 , "max_tokens" : 70}'
+
+
+
+curl -X POST http://34.124.151.186:80/generate  \
+     -H "service: prompt" \
+     -H "input_tokens: 4" \
+      -H "max_tokens: 1000" \
+     -d '{ "prompt": "what is life?", "use_beam_search": false, "temperature": 0, "max_tokens": 1000 }'
+
+
+curl -X POST http://34.126.95.177:80/generate \
+  -H "x-route-to: deployment-1" \
+    -d '{ prompts : ["Hello, my name is","The president of the United States is",], "use_beam_search": false,  "temperature": 0 , "max_tokens" : 70}'
