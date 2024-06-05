@@ -1,0 +1,144 @@
+use proxy_wasm::traits::*;
+use proxy_wasm::types::*;
+use rand_core::RngCore;
+use rand_core::SeedableRng;
+use rand_pcg::Pcg32;
+use std::cell::RefCell;
+use std::rc::Rc;
+use serde_json::Value;
+
+thread_local! {
+    static FILTER_INSTANCE: Rc<RefCell<MyWasmFilter>> = Rc::new(RefCell::new(MyWasmFilter::new()));
+}
+
+struct MyWasmFilter {
+    rng: Pcg32,
+}
+
+impl MyWasmFilter {
+    fn new() -> Self {
+        MyWasmFilter {
+            rng: Pcg32::seed_from_u64(42),
+        }
+    }
+
+    fn generate_weighted_random_bit(&mut self, p: f64) -> u8 {
+        assert!(p >= 0.0 && p <= 1.0, "Probability must be between 0 and 1");
+
+        let random_value = self.rng.next_u32() as f64 / u32::MAX as f64;
+
+        if random_value < p {
+            0
+        } else {
+            1
+        }
+    }
+
+    fn count_words(s: &str) -> usize {
+        s.split_whitespace().count()
+    }
+
+    fn count_tokens(word_count: usize) -> usize {
+        (word_count as f64 / 0.75).ceil() as usize
+    }
+
+    fn route_based_on_sum(&self, sum: usize) -> &'static str {
+        if sum <= 20 {
+            "deployment-1"
+        } else {
+            "deployment-2"
+        }
+    }
+}
+
+impl Context for MyWasmFilter {}
+
+impl HttpContext for MyWasmFilter {
+    fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
+        if let Some(service_header) = self.get_http_request_header("service") {
+            if service_header.as_str() == "random" {
+                FILTER_INSTANCE.with(|filter| {
+                    let mut filter = filter.borrow_mut();
+                    let weighted_bit = filter.generate_weighted_random_bit(0.5); // Adjust the probability as needed
+                    if weighted_bit == 0 {
+                        self.set_http_request_header("x-route-to", Some("deployment-1"));
+                    } else {
+                        self.set_http_request_header("x-route-to", Some("deployment-2"));
+                    }
+                });
+                return Action::Continue;
+            }
+            else{
+                self.send_http_response(400, vec![("content-type", "text/plain")], Some(b"Invalid service header"));
+                return Action::Pause;
+            }
+        }
+        Action::Continue
+    }
+
+    fn on_http_request_body(&mut self, body_size: usize, end_of_stream: bool) -> Action {
+        if end_of_stream {
+            if let Some(service_header) = self.get_http_request_header("service") {
+                if service_header.as_str() == "random" {
+                    self.send_http_response(400, vec![("content-type", "text/plain")], Some(b"hitting this one inside on_http_request_body"));
+                                return Action::Pause;
+                }
+            }
+
+            if let Some(body_bytes) = self.get_http_request_body(0, body_size) {
+                if let Ok(body_str) = std::str::from_utf8(&body_bytes) {
+                    if let Ok(json_body) = serde_json::from_str::<Value>(body_str) {
+                        if let Some(prompt) = json_body.get("prompt").and_then(|v| v.as_str()) {
+                            let word_count = MyWasmFilter::count_words(prompt);
+                            let token_count = MyWasmFilter::count_tokens(word_count);
+                            if let Some(max_tokens) = json_body.get("max_tokens").and_then(|v| v.as_u64()) {
+                                let sum = token_count + max_tokens as usize;
+                                let route = self.route_based_on_sum(sum);
+                                self.send_http_response(400, vec![("content-type", "text/plain")], Some(b"hitting this one inside on_http_request_body routing"));
+                                return Action::Pause;
+                            } else {
+                                self.send_http_response(400, vec![("content-type", "text/plain")], Some(b"Missing or invalid 'max_tokens' field"));
+                                return Action::Pause;
+                            }
+                        } else {
+                            self.send_http_response(400, vec![("content-type", "text/plain")], Some(b"Missing or invalid 'prompt' field"));
+                            return Action::Pause;
+                        }
+                    } else {
+                        self.send_http_response(400, vec![("content-type", "text/plain")], Some(b"Invalid JSON in request body"));
+                        return Action::Pause;
+                    }
+                } else {
+                    self.send_http_response(400, vec![("content-type", "text/plain")], Some(b"Invalid UTF-8 in request body"));
+                    return Action::Pause;
+                }
+            } else {
+                self.send_http_response(400, vec![("content-type", "text/plain")], Some(b"Failed to read request body"));
+                return Action::Pause;
+            }
+        }
+        else{
+            Action::Continue
+        }
+    }
+}
+
+impl RootContext for MyWasmFilter {
+    fn on_configure(&mut self, _: usize) -> bool {
+        true
+    }
+
+    fn create_http_context(&self, _: u32) -> Option<Box<dyn HttpContext>> {
+        Some(Box::new(MyWasmFilter::new()))
+    }
+
+    fn get_type(&self) -> Option<ContextType> {
+        Some(ContextType::HttpContext)
+    }
+}
+
+#[no_mangle]
+pub fn _start() {
+    proxy_wasm::set_log_level(LogLevel::Trace);
+    proxy_wasm::set_root_context(|_| Box::new(MyWasmFilter::new()));
+}
