@@ -20,8 +20,12 @@ import random
 import time
 from locust import web  # Import the web module from Locust
 from typing import Callable, List
+from locust import FastHttpUser, task, events, constant_throughput
 from locust import FastHttpUser, task, events, User
 from locust.runners import MasterRunner
+from transformers import AutoTokenizer, PreTrainedTokenizerBase
+from locust import User, between
+from locust.clients import HttpSession
 from transformers import AutoTokenizer
 
 from locust.exception import LocustError
@@ -37,7 +41,65 @@ from custom_metric_aggregator import TokenMetricCollector
 local_metric_collector = TokenMetricCollector()
 
 logging.basicConfig(level=logging.INFO)
-grpc_gevent.init_gevent()
+
+# def get_n_random_words_from_file(file_path, n):
+#     try:
+#         # Open the file in read mode
+#         with open(file_path, 'r', encoding='utf-8') as file:
+#             #print("here")
+#             # Read all content of the file
+#             content = file.read()
+#             # Split the content into words based on whitespace
+#             words = content.split()
+#             # Check if the file contains enough words
+#             if len(words) < n:
+#                 return "The file does not contain enough words."
+
+#             # Pick a random start index
+#             start_index = random.randint(0, len(words) - n)
+            
+#             result = ' '.join(words[start_index:start_index + n])
+
+#             # Get the slice of n words from a random start index
+#             return result
+#     except FileNotFoundError:
+#         return "The specified file was not found."
+#     except Exception as e:
+#         return f"An error occurred: {str(e)}"
+
+
+
+# def generate_random_text(word_count=10):
+#     """ Generate a random sentence of a given number of words. """
+#     file_path = "locust-tasks/Harry_Potter_and_the_Sorcerer_Stone.txt"
+#     result = get_n_random_words_from_file(file_path, word_count)
+#     return result
+
+def load_test_prompts_pure_dove():
+    puredove_prompts = []
+    file_path = "locust-tasks/pure-dove.jsonl"
+    with open(file_path, 'r') as file:
+        for line in file:
+            json_object = json.loads(line)
+            if "conversation" in json_object:
+                conversation = json_object["conversation"]
+                if len(conversation) > 0:
+                    first_input = conversation[0]["input"]
+                    first_output = conversation[0]["output"]
+                    puredove_prompts.append((first_input, first_output))
+    return puredove_prompts
+
+def load_test_prompts_arxiv_math():
+    
+    arxiv_prompts = []
+    file_path = "locust-tasks/arxiv-math-instruct.jsonl"
+    with open(file_path, 'r') as file:
+        for line in file:
+            json_object = json.loads(line)
+            question = json_object.get("question")
+            answer = json_object.get("answer")
+            arxiv_prompts.append((question, answer))
+    return arxiv_prompts
 
 def load_test_prompts():
     """Loads test prompts from a local file location."""
@@ -60,8 +122,8 @@ def generate_request(prompt):
             "prompt": prompt,
             "n": 1,
             "best_of": best_of,
-            "use_beam_search": use_beam_search,
-            "temperature": 0.0 if use_beam_search else 1.0,
+            "use_beam_search": False,#use_beam_search,
+            "temperature": 0.0, #if use_beam_search else 1.0,
             "top_p": 1.0,
             "max_tokens": output_len,
             "ignore_eos": False,
@@ -156,17 +218,51 @@ class BenchmarkUser(FastHttpUser):
     # Connection_timeout and network_timeout default is 60s. For inferencing workloads with
     # a large payload this timeout can be too short. Increasing timeouts to large amount.
     # TODO: turn timeout into a variable.
-    connection_timeout = 10800
-    network_timeout = 10800
+    connection_timeout = 108000
+    network_timeout = 108000
+    insecure = False
+    max_redirects = 5
+    max_retries = 1
+    wait_time = between(1, 1)  # This will send a request every second
+    
 
+
+    
     @task
     def lm_generate(self):
+        global arxiv_prompt
+        global pure_dove_prompt
         global model_params
         global tokenizer
+        
 
-        prompt = get_random_prompt(self)
+
+        if random.uniform(0, 1) > 0.5:
+            prompt_resp = pure_dove_prompt[random.randrange(0, len(pure_dove_prompt))]
+            prompt = prompt_resp[0]
+            resp = prompt_resp[1]
+            input_token_count = len(tokenizer.encode(prompt))
+            output_token_count = len(tokenizer.encode(resp))
+            #headers = {"User-Agent": "Benchmark Client", "input_tokens" : input_token_count, "max_tokens" : output_token_count,  "service" : "long"}
+            #headers = {"User-Agent": "Benchmark Client", "x-route-to": "deployment-1"}
+        else:
+            prompt_resp = arxiv_prompt[random.randrange(0, len(arxiv_prompt))]
+            prompt = prompt_resp[0]
+            resp = prompt_resp[1]
+            input_token_count = len(tokenizer.encode(prompt))
+            output_token_count = len(tokenizer.encode(resp))
+            #headers = {"User-Agent": "Benchmark Client", "input_tokens" : input_token_count, "max_tokens" : output_token_count, "service" : "short"}
+            #headers = {"User-Agent": "Benchmark Client", "x-route-to": "deployment-2"}
+            
+        if random.uniform(0, 1) > 0.5:
+            headers = {"User-Agent": "Benchmark Client", "x-route-to": "deployment-1"}
+        else:
+            headers = {"User-Agent": "Benchmark Client", "x-route-to": "deployment-2"}
+             
+            
+
         request = generate_request(prompt)
-        headers = {"User-Agent": "Benchmark Client", "Connection": "close"}
+        request["max_tokens"] = output_token_count + 10
         logging.info(f"Sending request: {request}")
         test_start_time = time.time()
         with self.client.post("/generate", headers=headers, json=request, catch_response=True) as resp:
@@ -176,40 +272,46 @@ class BenchmarkUser(FastHttpUser):
                 if resp.status_code == 0:
                     logging.error(
                         f"Failed request with invalid response code: {resp.status_code}. Due to requests.RequestException thrown by Session, caused by connection errors, timeouts or similar. Try increasing connection_timeout")
-                handle_failed_response(request, resp)
-
-def handle_successful_response(prompt, reponse, start_time):
-    global model_params
-    test_time = time.time() - start_time
-    request_successful_bool = 1
-    tokens_sent, tokens_received = get_token_count(prompt, reponse)
-
-    send_metrics(tokens_sent, tokens_received, test_time, request_successful_bool)
-
-def handle_failed_response(request, response):
-    global model_params
-    response.failure("Got unexpected response")
-    logging.error(f"request {request} failed with: {response.status_code}")
-    tokens_sent = -1
-    tokens_received = -1
-    test_time = -1
-    request_successful_bool = 0
-
-    send_metrics(tokens_sent, tokens_received, test_time, request_successful_bool)
-
-def send_metrics( tokens_sent, tokens_received, test_time, request_successful_bool, ttft=0):
-    local_metric_collector.add_metric(
-        tokens_sent, tokens_received, test_time, request_successful_bool, ttft)
-    logging.info(
+                self.handle_failed_response(request, resp, test_start_time)
+                
+    def send_metrics(self,  tokens_sent, tokens_received, test_time, request_successful_bool, start_time, ttft=0):
+        if local_metric_collector.t == 0.0:
+            local_metric_collector.t = start_time
+        local_metric_collector.add_metric(
+        tokens_sent, tokens_received, test_time, request_successful_bool, ttft, start_time)
+        logging.info(
         f'sending to master: metric_update: {[tokens_sent, tokens_received, test_time, request_successful_bool, ttft]}')
+
+    def handle_successful_response(self, prompt, reponse, start_time):
+        global model_params
+        if local_metric_collector.t == 0.0:
+            local_metric_collector.t = start_time
+        test_time = time.time() - start_time
+        request_successful_bool = 1
+        tokens_sent, tokens_received = get_token_count(prompt, reponse)
+
+        self.send_metrics(tokens_sent, tokens_received, test_time, request_successful_bool, start_time)
+
+    def handle_failed_response(self, request, response, start_time):
+        global model_params
+        response.failure("Got unexpected response")
+        if local_metric_collector.t == 0.0:
+            local_metric_collector.t = start_time
+        logging.error(f"request {request} failed with: {response.status_code}")
+        tokens_sent = -1
+        tokens_received = -1
+        test_time = -1
+        request_successful_bool = 0
+
+        self.send_metrics(tokens_sent, tokens_received, test_time, request_successful_bool, start_time)
+
 
 @events.test_stop.add_listener
 def on_test_stop(environment, **kwargs):
     """on test stop the locust master resets metric collector"""
-    if isinstance(environment.runner, MasterRunner):
-        logging.info(f'dumping metrics before clear: {local_metric_collector.json_dump_report()}')
-        logging.info(f'init metric_collector')
-        local_metric_collector.__init__()
+    #if isinstance(environment.runner, MasterRunner):
+    logging.info(f'init metric_collector')
+    local_metric_collector.__init__()
 
 
 """
@@ -224,14 +326,15 @@ def on_report_to_master(client_id, data):
     to the dict that is being sent, and then we clear the local stats in the worker, so
     as to avoid sending duplicate data to the master on the next run.
     """
-    tokens_sent, tokens_recieved, test_time, success_count, failure_count, ttft = local_metric_collector.share_stats()
+    tokens_sent, tokens_recieved, test_time, success_count, failure_count, ttft, t = local_metric_collector.share_stats()
     data["tokens-sent"] = tokens_sent
     data["tokens-received"] = tokens_recieved
     data["test-time"] = test_time
     data["success-count"] = success_count
     data["failure-count"] = failure_count
     data["time_to_first_token"] = ttft
-    local_metric_collector.__init__
+    data["t"] = t
+    local_metric_collector.reinit()
 
 
 @events.worker_report.add_listener
@@ -242,7 +345,7 @@ def on_worker_report(client_id, data):
     stats dict.
     """
     local_metric_collector.add_metrics(
-        data["tokens-sent"], data["tokens-received"], data["test-time"], data["success-count"], data["failure-count"], data["time_to_first_token"])
+        data["tokens-sent"], data["tokens-received"], data["test-time"], data["success-count"], data["failure-count"], data["time_to_first_token"], data["t"])
 
 
 @events.init_command_line_parser.add_listener
@@ -252,7 +355,9 @@ def _(parser):
     parser.add_argument("--best_of", type=int, env_var="BEST_OF",
                         include_in_web_ui=True, default=1,  help="Generates `best_of` sequences per prompt and returns the best one.")
     parser.add_argument("--max_output_len", type=int, env_var="MAX_OUTPUT_LEN",
-                        include_in_web_ui=True, default=1024,  help="Maximum number of output tokens. Used as max tokens for generate request.")
+                        include_in_web_ui=True, default=1000,  help="Maximum number of output tokens. Used as max tokens for generate request.")
+    parser.add_argument('--max_prompt_len', type=int,
+                        help='Maximum number of input tokens. Used as max filter on dataset prompts.', default=1000)
     parser.add_argument("--sax_model", type=str, env_var="SAX_MODEL",
                         include_in_web_ui=True, default="",  help="Required for sax backend. Used only for sax backend. Model name to send request to at API server for SAX model server.")
     parser.add_argument("--use_beam_search", action="store_true", env_var="USE_BEAM_SEARCH",
@@ -264,26 +369,22 @@ def _(parser):
 def _(environment, **kwargs):
     if not isinstance(environment.runner, MasterRunner):
         global model_params
-        global test_data
+        global pure_dove_prompt
+        global arxiv_prompt
         global local_metric_collector
         global tokenizer
 
         tokenizer = AutoTokenizer.from_pretrained(
             environment.parsed_options.tokenizer)
 
-        logging.info(
-            "Loading test prompts from locust-tasks/filtered_prompts.txt.")
-        test_data = []
-        try:
-            test_data = load_test_prompts()
-        except Exception as e:
-            logging.error(f"Failed to load test data: {e}")
-        logging.info(f"Loaded {len(test_data)} test prompts.")
+        pure_dove_prompt  = load_test_prompts_pure_dove()
+        arxiv_prompt = load_test_prompts_arxiv_math() 
 
         model_params = {
             "backend": environment.parsed_options.backend,
             "best_of": environment.parsed_options.best_of,
             "max_output_len": environment.parsed_options.max_output_len,
+            "max_prompt_len": environment.parsed_options.max_prompt_len,
             "sax_model": environment.parsed_options.sax_model,
             "use_beam_search": environment.parsed_options.use_beam_search,
             "tokenizer": environment.parsed_options.tokenizer,

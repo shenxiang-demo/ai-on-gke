@@ -57,13 +57,11 @@ spec:
           env:
             - name: PORT
               value: 80
-%{ for hugging_face_token_secret in hugging_face_token_secret_list ~}
             - name: HUGGING_FACE_HUB_TOKEN # Related token consumption
               valueFrom:
                 secretKeyRef:
-                  name: hf-token
+                  name: hf-token1
                   key: HF_TOKEN
-%{ endfor ~}
           resources:
             limits:
               nvidia.com/gpu: ${gpu_count} # number of gpu's allocated to workload

@@ -1,6 +1,7 @@
 import datetime
 import logging
 import json
+import time
 
 class TokenMetricCollector:
     def __init__(self):
@@ -9,29 +10,32 @@ class TokenMetricCollector:
         self.test_time = []
         self.success_count = 0
         self.failure_count = 0
-        self.time_to_first_token_list = []
 
-    def add_metric(self, sent, received, test_time, request_succesful_bool, ttft):
+    def add_metric(self, sent, received, test_time, request_succesful_bool):
         if request_succesful_bool == 1:
             self.tokens_sent.append(sent)
             self.tokens_received.append(received)
             self.test_time.append(test_time)
             self.success_count += 1
-            if ttft != 0:
-                self.time_to_first_token_list.append(ttft)
         else:
             self.failure_count += 1
+        if self.t == 0.0:
+            self.t = t
+        else:
+            self.t = min(t, self.t)
 
-    def add_metrics(self, tokens_sent, tokens_received, test_time, success_count, failure_count, ttfts):
+    def add_metrics(self, tokens_sent, tokens_received, test_time, success_count, failure_count):
         self.tokens_sent = self.tokens_sent + tokens_sent
         self.tokens_received = self.tokens_received + tokens_received
         self.test_time = self.test_time + test_time
         self.success_count += success_count
         self.failure_count += failure_count
         self.time_to_first_token_list = self.time_to_first_token_list + ttfts
+        self.t = t
+        self.time_to_first_token_list = self.time_to_first_token_list + ttfts
 
     def share_stats(self):
-        return self.tokens_sent, self.tokens_received, self.test_time, self.success_count, self.failure_count, self.time_to_first_token_list
+        return self.tokens_sent, self.tokens_received, self.test_time, self.success_count, self.failure_count
 
     def calculate_average_tokens(self):
         if self.tokens_sent and len(self.tokens_sent) > 0:
@@ -47,17 +51,16 @@ class TokenMetricCollector:
                     self.tokens_received[i] / self.test_time[i])
             avg_output_token_latency = avg_output_token_latency / \
                 self.success_count
-            return avg_sent, avg_received, avg_test_time, avg_output_token_latency
-        return 0, 0, 0, 0
+                
+            return avg_sent, avg_received, avg_test_time, avg_output_token_latency, sum(self.tokens_received), self.success_count, self.failure_count
+        return 0, 0, 0, 0, 0, 0, 0
 
     def json_dump_report(self):
-        avg_sent, avg_received, avg_test_time, avg_output_token_latency = self.calculate_average_tokens()
+        avg_sent, avg_received, avg_test_time, avg_output_token_latency, tokens_received, success_count, failure_count = self.calculate_average_tokens()
         stats = {
             "average-tokens-sent": avg_sent,
             "average-tokens-received": avg_received,
             "average-output-token-latency": avg_output_token_latency,
             "average-test-time": avg_test_time,
-            "average-time-to-first-token": sum(self.time_to_first_token_list)/max(len(self.time_to_first_token_list),1)
         }
         return json.dumps(stats)
-

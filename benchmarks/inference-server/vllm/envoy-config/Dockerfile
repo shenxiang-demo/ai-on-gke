@@ -2,7 +2,7 @@
 FROM envoyproxy/envoy:v1.18.3
 
 # Add your Wasm filter
-COPY ./wasm_filter/target/wasm32-unknown-unknown/release/wasm_filter.wasm /etc/envoy/wasm_filter.wasm
+COPY ../wasm_filter/target/wasm32-unknown-unknown/release/wasm_filter.wasm /etc/envoy/wasm_filter.wasm
 #COPY ./wasm_filter/pkg/wasm_filter_bg.wasm /etc/envoy/wasm_filter.wasm
 #COPY ./wasm_filter/pkg/wasm_filter.js /etc/envoy/wasm_filter.js 
 
