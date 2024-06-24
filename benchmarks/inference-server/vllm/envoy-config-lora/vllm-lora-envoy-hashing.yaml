@@ -1,0 +1,73 @@
+# Deployment for LLM Server with Envoy sidecar
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lorax-kaushik
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: lorax-kaushik
+  template:
+    metadata:
+      labels:
+        app: lorax-kaushik
+    spec:
+      containers:
+      - name: lorax
+        image: ghcr.io/predibase/lorax:main
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        env:
+        - name: PORT
+          value: "8000"
+        - name: HUGGING_FACE_HUB_TOKEN
+          value: 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
+        args:
+        - --model-id
+        - meta-llama/Llama-2-7b-hf
+        - --max-input-length
+        - "512"
+        - --max-total-tokens
+        - "1024"
+        - --max-batch-total-tokens
+        - "4096"
+        - --max-batch-prefill-tokens
+        - "2048"
+        - --sharded
+        - "false"
+        resources:
+          limits:
+            cpu: "8"
+            ephemeral-storage: 100Gi
+            memory: 27041Mi
+            nvidia.com/gpu: "1"
+          requests:
+            cpu: "8"
+            ephemeral-storage: 100Gi
+            memory: 27041Mi
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - mountPath: /data
+          name: data
+        - mountPath: /dev/shm
+          name: shm
+      - name: envoy
+        image: envoyproxy/envoy:v1.18.3
+        ports:
+        - containerPort: 10000
+        volumeMounts:
+        - name: envoy-config
+          mountPath: /etc/envoy
+      volumes:
+      - name: data
+        emptyDir: {}
+      - name: shm
+        emptyDir:
+          medium: Memory
+      - name: envoy-config
+        configMap:
+          name: envoy-config
